@@ -78,7 +78,8 @@ float *input;
 float *intermediate;
 float *output;
 volatile int index = 0; 
- 
+float *mag;
+complex *cplxBuf;
 
  /******************************* Function prototypes *******************************/
 void init_hardware(void);     
@@ -152,6 +153,9 @@ void init_arrays(void)
 	input        = (float *) calloc(BUFLEN, sizeof(float)); /* Input array */
     output       = (float *) calloc(BUFLEN, sizeof(float)); /* Output array */
     intermediate = (float *) calloc(BUFLEN, sizeof(float)); /* Array for processing*/
+    mag			 = (float *) calloc(BUFLEN, sizeof(float)); /* magnitude of FFT*/
+    cplxBuf		 = (complex *) calloc(BUFLEN, sizeof(complex)); /* Array for processing*/
+    
 }
 
 /*************************** INTERRUPT SERVICE ROUTINE  ******************************/
@@ -181,7 +185,8 @@ void ISR_AIC(void)
 void wait_buffer(void)
 {
 	float *p;  
-
+	
+	int i;
 	/* wait for array index to be set to zero by ISR */
 	while(index);
 	
@@ -191,9 +196,23 @@ void wait_buffer(void)
 	output = intermediate;
 	intermediate = p;
 	
-	/************************* DO PROCESSING OF FRAME  HERE **************************/                
+	/************************* DO PROCESSING OF FRAME  HERE **************************/
+	//copy data into intermediate to new complex value array
 	
-
+	for (i=0;i<BUFLEN;i++){
+		cplxBuf[i].r = intermediate[i];
+		cplxBuf[i].i = 0;
+	} 
+	fft(BUFLEN, cplxBuf);
+	for (i=0;i<BUFLEN;i++){
+		mag[i] = cabs(cplxBuf[i]);
+	}
+	ifft(BUFLEN, cplxBuf);
+	for (i=0;i<BUFLEN;i++){
+		intermediate[i] = cplxBuf[i].r;
+	}
+	
+	
 								/*please add your code */	    
 
 
