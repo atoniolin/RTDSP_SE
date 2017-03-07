@@ -187,6 +187,7 @@ void wait_buffer(void)
 	float *p;  
 	
 	int i;
+	int j;
 	/* wait for array index to be set to zero by ISR */
 	while(index);
 	
@@ -198,29 +199,33 @@ void wait_buffer(void)
 	
 	/************************* DO PROCESSING OF FRAME  HERE **************************/
 	//copy data into intermediate to new complex value array
+	//Reference: https://batchloaf.wordpress.com/2013/12/07/simple-dft-in-c/
 	
-	for (i=0;i<BUFLEN;i++){
-		cplxBuf[i].r = intermediate[i];
+	for (i=0;i<BUFLEN;i++){//k is i
+		cplxBuf[i].r = 0;
 		cplxBuf[i].i = 0;
+		for (j=0;j<BUFLEN;j++) {//n is j
+			cplxBuf[i].r += intermediate[j]*cos(2*PI*i*j/BUFLEN);
+		}
+		for (j=0;j<BUFLEN;j++) {
+			cplxBuf[i].i -= intermediate[j]*sin(2*PI*i*j/BUFLEN);;
+		}
 	} 
-	fft(BUFLEN, cplxBuf);
+	
 	for (i=0;i<BUFLEN;i++){
 		mag[i] = cabs(cplxBuf[i]);
 	}
-	ifft(BUFLEN, cplxBuf);
-	for (i=0;i<BUFLEN;i++){
-		intermediate[i] = cplxBuf[i].r;
-	}
 	
-	
-								/*please add your code */	    
-
-
+	for (i=0;i<BUFLEN;i++){//k is i
+		intermediate[i] = 0;
+		
+		for (j=0;j<BUFLEN;j++) {//n is j
+			intermediate[i] += cplxBuf[j].r*cos(2*PI*i*j/BUFLEN)-cplxBuf[j].i*sin(2*PI*i*j/BUFLEN);
+		}
+		intermediate[i] = intermediate[i]/BUFLEN;
+	} 
 	/**********************************************************************************/
-	
 	/* wait here in case next sample has not yet been read in */                          
 	while(!index);
 }        
-
-
 
