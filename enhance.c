@@ -83,6 +83,7 @@ float cpufrac; 						/* Fraction of CPU time used */
 volatile int io_ptr=0;              /* Input/ouput pointer for circular buffers */
 volatile int frame_ptr=0;           /* Frame pointer */
 complex *cplxBuf;
+float *mag;
 
  /******************************* Function prototypes *******************************/
 void init_hardware(void);    	/* Initialize codec */ 
@@ -101,6 +102,7 @@ void main()
     inwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Input window */
     outwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Output window */
 	cplxBuf		 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	mag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	/* initialize board and the audio port */
   	init_hardware();
   	/* initialize hardware interrupts */
@@ -154,7 +156,7 @@ void init_HWI(void)
 /******************************** process_frame() ***********************************/  
 void process_frame(void)
 {
-	int k, m; 
+	int k, m, idx; 
 	int io_ptr0;   
 
 	/* work out fraction of available CPU time used by algorithm */    
@@ -179,11 +181,25 @@ void process_frame(void)
 		if (++m >= CIRCBUF) m=0; /* wrap if required */
 	} 	
 	/************************* DO PROCESSING OF FRAME  HERE **************************/
-										
+	for (idx=0;idx<FFTLEN;idx++){
+		cplxBuf[idx].r = inframe[idx];
+		cplxBuf[idx].i = 0;
+	} 
+	fft(FFTLEN, cplxBuf);
+	for (idx=0;idx<FFTLEN;idx++){
+		mag[idx] = cabs(cplxBuf[idx]);
+	}
+	ifft(FFTLEN, cplxBuf);
+	for (idx=0;idx<FFTLEN;idx++){
+		outframe[idx] = cplxBuf[idx].r;
+	}
+		
+	/*
     for (k=0;k<FFTLEN;k++)
 	{                           
-		outframe[k] = inframe[k];/* copy input straight into output */ 
+		outframe[k] = inframe[k];
 	} 
+	*/
 	
 	/********************************************************************************/
 	
