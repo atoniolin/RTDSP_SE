@@ -1,16 +1,11 @@
 /*************************************************************************************
 			       DEPARTMENT OF ELECTRICAL AND ELECTRONIC ENGINEERING
 					   		     IMPERIAL COLLEGE LONDON 
-
  				      EE 3.19: Real Time Digital Signal Processing
 					       Dr Paul Mitcheson and Daniel Harvey
-
 				        		  LAB 6: Frame Processing
-
  				            ********* F R A M E. C **********
-
   				Demonstrates Frame Processing (Interrupt driven) on the DSK. 
-
  *************************************************************************************
  				Updated for use on 6713 DSK by Danny Harvey: May-Aug 2006
 				Updated for ccsV4 Sept 2010
@@ -187,7 +182,6 @@ void wait_buffer(void)
 	float *p;  
 	
 	int i;
-	int j;
 	/* wait for array index to be set to zero by ISR */
 	while(index);
 	
@@ -199,33 +193,26 @@ void wait_buffer(void)
 	
 	/************************* DO PROCESSING OF FRAME  HERE **************************/
 	//copy data into intermediate to new complex value array
-	//Reference: https://batchloaf.wordpress.com/2013/12/07/simple-dft-in-c/
 	
-	for (i=0;i<BUFLEN;i++){//k is i
-		cplxBuf[i].r = 0;
+	for (i=0;i<BUFLEN;i++){
+		cplxBuf[i].r = intermediate[i];
 		cplxBuf[i].i = 0;
-		for (j=0;j<BUFLEN;j++) {//n is j
-			cplxBuf[i].r += intermediate[j]*cos(2*PI*i*j/BUFLEN);
-		}
-		for (j=0;j<BUFLEN;j++) {
-			cplxBuf[i].i -= intermediate[j]*sin(2*PI*i*j/BUFLEN);;
-		}
 	} 
-	
+	fft(BUFLEN, cplxBuf);
 	for (i=0;i<BUFLEN;i++){
 		mag[i] = cabs(cplxBuf[i]);
 	}
+	ifft(BUFLEN, cplxBuf);
+	for (i=0;i<BUFLEN;i++){
+		intermediate[i] = cplxBuf[i].r;
+	}
 	
-	for (i=0;i<BUFLEN;i++){//k is i
-		intermediate[i] = 0;
-		
-		for (j=0;j<BUFLEN;j++) {//n is j
-			intermediate[i] += cplxBuf[j].r*cos(2*PI*i*j/BUFLEN)-cplxBuf[j].i*sin(2*PI*i*j/BUFLEN);
-		}
-		intermediate[i] = intermediate[i]/BUFLEN;
-	} 
+	
+								/*please add your code */	    
+
+
 	/**********************************************************************************/
+	
 	/* wait here in case next sample has not yet been read in */                          
 	while(!index);
 }        
-
