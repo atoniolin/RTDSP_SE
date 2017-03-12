@@ -45,12 +45,17 @@
 #define OVERSAMP 4					/* oversampling ratio (2 or 4) */  
 #define FRAMEINC (FFTLEN/OVERSAMP)	/* Frame increment 64 */
 #define CIRCBUF (FFTLEN+FRAMEINC)	/* length of I/O buffers 320 */
+//#define OUTGAIN 16000.0				/* Output gain for DAC */
 #define OUTGAIN 16000.0				/* Output gain for DAC */
 #define INGAIN  (1.0/16000.0)		/* Input gain for ADC  */
 // PI defined here for use in your code 
 #define PI 3.141592653589793
 #define TFRAME FRAMEINC/FSAMP       /* time between calculation of each frame 8ms*/
-
+#define ALPHA 20	/*correction factor for under/over estimation of noise*/
+#define LIMIT 312	/*number of frames to be compared before updating M_1(omega)*/
+#define NSUBFRAME 5
+#define LAMBDA 0.01
+//#define floatMAX 0x7F7FFFFF
 /******************************* Global declarations ********************************/
 
 /* Audio port configuration settings: these values set registers in the AIC23 audio 
@@ -82,8 +87,10 @@ float ingain, outgain;				/* ADC and DAC gains */
 float cpufrac; 						/* Fraction of CPU time used */
 volatile int io_ptr=0;              /* Input/ouput pointer for circular buffers */
 volatile int frame_ptr=0;           /* Frame pointer */
-complex *cplxBuf;
-float *mag;
+volatile int timePtr = 1;			/*tracks the minimum spectrum*/
+complex *cplxBuf, *outCplxBuf;
+float *mag1, *mag2, *mag3, *mag4, *gMag, *noiseMag, *thisMag, *yMag;
+float floatMAX = 0x7FFFFFFF;
 
  /******************************* Function prototypes *******************************/
 void init_hardware(void);    	/* Initialize codec */ 
@@ -102,7 +109,22 @@ void main()
     inwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Input window */
     outwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Output window */
 	cplxBuf		 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
-	mag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	outCplxBuf	 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	mag1			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	mag2			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	mag3			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	mag4			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	gMag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	noiseMag		 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	thisMag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	yMag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	for(k = 0; k< FFTLEN; k++) {
+		mag1[k] = floatMAX;
+		mag2[k] = floatMAX;
+		mag3[k] = floatMAX;
+		mag4[k] = floatMAX;
+	}
+	
 	/* initialize board and the audio port */
   	init_hardware();
   	/* initialize hardware interrupts */
@@ -156,22 +178,20 @@ void init_HWI(void)
 /******************************** process_frame() ***********************************/  
 void process_frame(void)
 {
-	int k, m, idx; 
-	int io_ptr0;   
-
+	int k, m, idxFreq;
+	int minMag = 0;
+	int io_ptr0;
+	float tempMagnitude = 0;
 	/* work out fraction of available CPU time used by algorithm */    
 	cpufrac = ((float) (io_ptr & (FRAMEINC - 1)))/FRAMEINC;  //????
-	//cpufrac = ((float) (io_ptr + (FRAMEINC - 1)))/FRAMEINC;
-	/* wait until io_ptr is at the start of the current frame */ 	
-	while((io_ptr/FRAMEINC) != frame_ptr);
 	
+	/* wait until io_ptr is at the start of the current frame */ 	
+	while((io_ptr/FRAMEINC) != frame_ptr);	
 	/* then increment the framecount (wrapping if required) */ 
 	if (++frame_ptr >= (CIRCBUF/FRAMEINC)) frame_ptr=0; /*jump by 64, range is 0->5*/
- 	
  	/* save a pointer to the position in the I/O buffers (inbuffer/outbuffer) where the 
  	data should be read (inbuffer) and saved (outbuffer) for the purpose of processing */
  	io_ptr0=frame_ptr * FRAMEINC;
-	
 	/* copy input data from inbuffer into inframe (starting from the pointer position) */
 	m=io_ptr0;
     for (k=0;k<FFTLEN;k++)
@@ -181,25 +201,74 @@ void process_frame(void)
 		if (++m >= CIRCBUF) m=0; /* wrap if required */
 	} 	
 	/************************* DO PROCESSING OF FRAME  HERE **************************/
-	for (idx=0;idx<FFTLEN;idx++){
-		cplxBuf[idx].r = inframe[idx];
-		cplxBuf[idx].i = 0;
+	for (idxFreq=0;idxFreq<FFTLEN;idxFreq++){
+		cplxBuf[idxFreq].r = inframe[idxFreq];
+		cplxBuf[idxFreq].i = 0;
 	} 
 	fft(FFTLEN, cplxBuf);
-	for (idx=0;idx<FFTLEN;idx++){
-		mag[idx] = cabs(cplxBuf[idx]);
+	
+	for (idxFreq=0;idxFreq<FFTLEN;idxFreq++){
+		/*take magnitude*/
+		thisMag[idxFreq] = cabs(cplxBuf[idxFreq]);
 	}
-	ifft(FFTLEN, cplxBuf);
-	for (idx=0;idx<FFTLEN;idx++){
-		outframe[idx] = cplxBuf[idx].r;
+	/*START PROCESSING HERE*/
+	/*starts noise estimation and puts into M1*/
+	/*idxFreq is frequency bin index*/
+	/*mag1 stores the minimum noise estimation*/
+	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		if(thisMag[idxFreq] < mag1[idxFreq]){
+			mag1[idxFreq]=thisMag[idxFreq];
+		}
+	}
+	
+	/*noise estimation*/
+	/*nested for loop to search for noiseMag*/
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){/*0->256*/
+		minMag = mag1[idxFreq]; /* initialize with the a magnitude from M1*/
+		if(minMag < mag2[idxFreq]){
+			minMag = mag2[idxFreq];
+		}
+		if(minMag < mag3[idxFreq]){
+			minMag = mag3[idxFreq];
+		}
+		if(minMag < mag4[idxFreq]){
+			minMag = mag4[idxFreq];
+		}
+		noiseMag[idxFreq] = ALPHA * minMag;
+	}
+	//range timePtr : {1,312}
+	/*update every 2.5sconds*/
+	/*LIMIT = 312, 2.5s/0.008s*/
+	if(++timePtr!=LIMIT){}
+	else{
+		timePtr = 1;
+		mag4=mag3;
+		mag3=mag2;
+		mag2=mag1;
+		for(k = 0; k< FFTLEN; k++) {
+			mag1[k] = floatMAX;
+		}
+	}
+	/*find the G(OMEGA) vector*/
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		tempMagnitude = 1 - noiseMag[idxFreq]/thisMag[idxFreq];
+		if(tempMagnitude<=LAMBDA){
+			gMag[idxFreq] = LAMBDA;
+		}
+		else{
+			gMag[idxFreq] = tempMagnitude;
+		}
+	}
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		/*noise subtraction*/
+		outCplxBuf[idxFreq] = rmul(gMag[idxFreq], cplxBuf[idxFreq]);
+	}
+	/*END PROCESSING HERE*/
+	ifft(FFTLEN, outCplxBuf);
+	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		outframe[idxFreq] = outCplxBuf[idxFreq].r;
 	}
 		
-	/*
-    for (k=0;k<FFTLEN;k++)
-	{                           
-		outframe[k] = inframe[k];
-	} 
-	*/
 	
 	/********************************************************************************/
 	
