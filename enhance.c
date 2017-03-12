@@ -50,7 +50,7 @@
 // PI defined here for use in your code 
 #define PI 3.141592653589793
 #define TFRAME FRAMEINC/FSAMP       /* time between calculation of each frame 8ms*/
-
+#define LIMIT 312	/*number of frames to be compared before updating M_1(omega)*/
 /******************************* Global declarations ********************************/
 
 /* Audio port configuration settings: these values set registers in the AIC23 audio 
@@ -82,8 +82,12 @@ float ingain, outgain;				/* ADC and DAC gains */
 float cpufrac; 						/* Fraction of CPU time used */
 volatile int io_ptr=0;              /* Input/ouput pointer for circular buffers */
 volatile int frame_ptr=0;           /* Frame pointer */
-complex *cplxBuf;
-
+volatile int timePtr = 1;			/*tracks the minimum spectrum*/
+complex *cplxBuf, *outCplxBuf;
+float *mag1, *mag2, *mag3, *mag4, *gMag, *noiseMag, *thisMag, *yMag;
+float floatMAX = 0x7FFFFFFF;
+float ALPHA = 20;
+float LAMBDA = 0.01;
  /******************************* Function prototypes *******************************/
 void init_hardware(void);    	/* Initialize codec */ 
 void init_HWI(void);            /* Initialize hardware interrupts */
@@ -93,7 +97,7 @@ void process_frame(void);       /* Frame processing routine */
 void main()
 {      
   	int k; // used in various for loops
-/*  Initialize and zero fill arrays */  
+	/*  Initialize and zero fill arrays */  
 	inbuffer	= (float *) calloc(CIRCBUF, sizeof(float));	/* Input array */
     outbuffer	= (float *) calloc(CIRCBUF, sizeof(float));	/* Output array */
 	inframe		= (float *) calloc(FFTLEN, sizeof(float));	/* Array for processing*/
@@ -101,6 +105,22 @@ void main()
     inwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Input window */
     outwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Output window */
 	cplxBuf		 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	outCplxBuf	 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	mag1			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	mag2			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	mag3			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	mag4			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	gMag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	noiseMag		 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	thisMag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	yMag			 = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	for(k = 0; k < FFTLEN; k++) {
+		mag1[k] = floatMAX;
+		mag2[k] = floatMAX;
+		mag3[k] = floatMAX;
+		mag4[k] = floatMAX;
+	}
+	
 	/* initialize board and the audio port */
   	init_hardware();
   	/* initialize hardware interrupts */
@@ -121,19 +141,15 @@ void init_hardware()
 {
     // Initialize the board support library, must be called first 
     DSK6713_init();
-    
     // Start the AIC23 codec using the settings defined above in config 
     H_Codec = DSK6713_AIC23_openCodec(0, &Config);
-
 	/* Function below sets the number of bits in word used by MSBSP (serial port) for 
 	receives from AIC23 (audio port). We are using a 32 bit packet containing two 
 	16 bit numbers hence 32BIT is set for  receive */
 	MCBSP_FSETS(RCR1, RWDLEN1, 32BIT);	
-
 	/* Configures interrupt to activate on each consecutive available 32 bits 
 	from Audio port hence an interrupt is generated for each L & R sample pair */	
 	MCBSP_FSETS(SPCR1, RINTM, FRM);
-
 	/* These commands do the same thing as above but applied to data transfers to the 
 	audio port */
 	MCBSP_FSETS(XCR1, XWDLEN1, 32BIT);	
@@ -154,39 +170,83 @@ void init_HWI(void)
 /******************************** process_frame() ***********************************/  
 void process_frame(void)
 {
-	int k, m; 
-	int io_ptr0;   
-
+	int k, m, idxFreq;
+	int io_ptr0;
+	float minMag = 0; //stores the minimum magnitude in estimating the noise
 	/* work out fraction of available CPU time used by algorithm */    
 	cpufrac = ((float) (io_ptr & (FRAMEINC - 1)))/FRAMEINC;  //????
-	//cpufrac = ((float) (io_ptr + (FRAMEINC - 1)))/FRAMEINC;
 	/* wait until io_ptr is at the start of the current frame */ 	
-	while((io_ptr/FRAMEINC) != frame_ptr);
-	
+	while((io_ptr/FRAMEINC) != frame_ptr);	
 	/* then increment the framecount (wrapping if required) */ 
 	if (++frame_ptr >= (CIRCBUF/FRAMEINC)) frame_ptr=0; /*jump by 64, range is 0->5*/
- 	
  	/* save a pointer to the position in the I/O buffers (inbuffer/outbuffer) where the 
  	data should be read (inbuffer) and saved (outbuffer) for the purpose of processing */
  	io_ptr0=frame_ptr * FRAMEINC;
-	
 	/* copy input data from inbuffer into inframe (starting from the pointer position) */
-	m=io_ptr0;
-    for (k=0;k<FFTLEN;k++)
+	m = io_ptr0;
+	/*windowing on input frame using Hanning Window*/  
+    for (k=0; k < FFTLEN; k ++)
 	{          
-		/*windowing on input frame using Hanning Window*/                 
 		inframe[k] = inbuffer[m] * inwin[k]; 
 		if (++m >= CIRCBUF) m=0; /* wrap if required */
 	} 	
 	/************************* DO PROCESSING OF FRAME  HERE **************************/
-										
-    for (k=0;k<FFTLEN;k++)
-	{                           
-		outframe[k] = inframe[k];/* copy input straight into output */ 
+	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
+		cplxBuf[idxFreq].r = inframe[idxFreq];
+		cplxBuf[idxFreq].i = 0;
 	} 
+	fft(FFTLEN, cplxBuf);
+	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++){
+		thisMag[idxFreq] = cabs(cplxBuf[idxFreq]);
+	}
+	/*START PROCESSING HERE*/
+	/*starts noise estimation and puts into M1*/
+	/*mag1, mag2, mag3, mag4 stores the minimum noise estimation*/
+	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		if(thisMag[idxFreq] < mag1[idxFreq]){
+			mag1[idxFreq]=thisMag[idxFreq];
+		}
+	}	
+	//range timePtr : {1,312}
+	/*noise estimation update every 2.5sconds, LIMIT = 312, 2.5s/0.008s*/
+	if(++timePtr<LIMIT){}
+	else{		
+		for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){/*0->256*/
+			minMag = mag1[idxFreq]; /* initialize with the a magnitude from M1*/
+			if(minMag > mag2[idxFreq]){	minMag = mag2[idxFreq];}
+			if(minMag > mag3[idxFreq]){	minMag = mag3[idxFreq];}
+			if(minMag > mag4[idxFreq]){	minMag = mag4[idxFreq];}
+			noiseMag[idxFreq] = ALPHA * minMag;
+		}
+		/*shift the estimate vectors and resets M1 to floatmax.*/
+		mag4=mag3;
+		mag3=mag2;
+		mag2=mag1;
+		for(k = 0; k < FFTLEN; k++) { mag1[k] = floatMAX;}
+		timePtr = 1;
+	}
+	/*find the G(OMEGA) vector*/
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		minMag = 1 - noiseMag[idxFreq]/thisMag[idxFreq];
+		if(minMag <= LAMBDA){
+			gMag[idxFreq] = LAMBDA;
+		}
+		else{
+			gMag[idxFreq] = minMag;
+		}
+	}
+	/*noise subtraction*/
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		outCplxBuf[idxFreq] = rmul(gMag[idxFreq], cplxBuf[idxFreq]);
+	}
 	
+	/*END PROCESSING HERE*/
+	//Take Inverse FFT
+	ifft(FFTLEN, outCplxBuf);
+	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		outframe[idxFreq] = outCplxBuf[idxFreq].r;		
+	}
 	/********************************************************************************/
-	
     /* multiply outframe by output window and overlap-add into output buffer */  
 	m=io_ptr0;
     for (k=0;k<(FFTLEN-FRAMEINC);k++) 
@@ -201,8 +261,6 @@ void process_frame(void)
 	}	                                   
 }        
 /*************************** INTERRUPT SERVICE ROUTINE  *****************************/
-
-// Map this to the appropriate interrupt in the CDB file
 // Map this to the appropriate interrupt in the TCF file
    
 void ISR_AIC(void)
