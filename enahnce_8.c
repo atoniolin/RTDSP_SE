@@ -1,4 +1,3 @@
-
 /*************************************************************************************
 			       DEPARTMENT OF ELECTRICAL AND ELECTRONIC ENGINEERING
 					   		     IMPERIAL COLLEGE LONDON 
@@ -57,10 +56,12 @@ float KSCALE = 0.0821;				/*for TAU 80ms*/
 //#define enhLPFPOWER 1
 #define enhLPFNoise 1
 #define overSub 1
+#define delayOutput 1
 int chooseThreshold = 1; /* 1->10*/
 float alphamax = 1000;
 int freqCap = 32;
 int highFreqCap = 32;
+
 /*************************End of Switches to Control Optimizations****************/
 /******************************* Global declarations ********************************/
 /* Audio port configuration settings: these values set registers in the AIC23 audio 
@@ -91,7 +92,7 @@ float	cpufrac; 						/* Fraction of CPU time used */
 volatile int io_ptr=0;              /* Input/ouput pointer for circular buffers */
 volatile int frame_ptr=0;           /* Frame pointer */
 volatile int timePtr = 1;			/*range timePtr : {1,312}. noise estimation update every 2.5sconds*/
-complex *cplxBuf, *outCplxBuf;
+complex *cplxBuf, *outCplxBuf, *thisOutCplxBufDelay1, *thisOutCplxBufDelay2;
 float	*mag1, *mag2, *mag3, *mag4, *gMag, *noiseMag, *thisMag, *yMag, *thisLPFMag, *noiseLPFMag;
 float	floatMAX = 0x7FFFFFFF;
 float	ALPHA = 20;
@@ -115,7 +116,7 @@ void estimateNoiseX (void);			/* noise subtraction on non-LPF version */
 void estimateNoiseLPF (void);		/* noise subtraction on LPF version */
 void shiftMag (void);				/* shifts the minimum estimates */
 void noiseSubtract (void);			/* performs noise subtraction by multiplying Y(w)=X(w)G(w)*/
-void overSubtract(void);				/* performs oversubtract for lower frequency bins*/
+void overSubtract(void);			/* performs oversubtract for lower frequency bins*/
 void noiseThreshold1 (void);		/* performs thresholding based on lambda */
 void noiseThreshold2 (void);		/* performs thresholding based on lambda */
 void noiseThreshold3 (void);		/* performs thresholding based on lambda */
@@ -127,6 +128,7 @@ void noiseThreshold8 (void);		/* performs thresholding based on lambda */
 void noiseThreshold9 (void);		/* performs thresholding based on lambda */
 void noiseThreshold10 (void);		/* performs thresholding based on lambda */
 void complexToFloat (void);			/* converts the complex time domain back to floating point */
+void complexToFloatDelayed (void);	/* converts the delayed complex time domain back to floating point */
 /********************************** Main routine ************************************/
 void main()
 {
@@ -233,8 +235,30 @@ void process_frame(void)
 	/*noise subtraction*/	
 	noiseSubtract();	
 	/*END PROCESSING HERE*/	
-	ifft(FFTLEN, outCplxBuf);
-	complexToFloat();
+	
+	#ifdef delayOutput
+		//perform noise comparison assuming threshold is 1.
+		for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
+			//if the next output is smaller, use that value.
+			//outCplxBuf is the future output
+			//thisOutCplxBufDelay1 is the current output
+			//thisOutCplxBufDelay2 is the previous output
+			if(outCplxBuf[idxFreq].r < thisOutCplxBufDelay1[idxFreq].r){
+				thisOutCplxBufDelay1[idxFreq].r = outCplxBuf[idxFreq].r;
+			}
+			if(thisOutCplxBufDelay2[idxFreq].r < thisOutCplxBufDelay1[idxFreq].r){
+				thisOutCplxBufDelay1[idxFreq].r = thisOutCplxBufDelay2[idxFreq].r;
+			}
+		}
+		//here, the current output is the delayed
+		ifft(FFTLEN, thisOutCplxBufDelay1);
+		complexToFloatDelayed();
+		thisOutCplxBufDelay1 = outCplxBuf;
+		thisOutCplxBufDelay2 = thisOutCplxBufDelay1;
+	#else
+		ifft(FFTLEN, outCplxBuf);
+		complexToFloat();
+	#endif
 	/********************************************************************************/
     /* multiply outframe by output window and overlap-add into output buffer */  
 	m=io_ptr0;
@@ -276,6 +300,8 @@ void init_buffers (void) {
     outwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Output window */
 	cplxBuf		= (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
 	outCplxBuf	= (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	thisOutCplxBufDelay1 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	thisOutCplxBufDelay1 =(complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
 	mag1			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	mag2			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	mag3			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
@@ -286,6 +312,7 @@ void init_buffers (void) {
 	yMag			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	thisLPFMag		= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	noiseLPFMag		= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	 
 	for(k = 0; k < FFTLEN; k++) {
 		mag1[k] = floatMAX;
 		mag2[k] = floatMAX;
@@ -547,4 +574,10 @@ void complexToFloat (void) {
 
 float square (float input) {
 	return input*input;
+}
+
+void complexToFloatDelayed (void) {
+	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		outframe[idxFreq] = thisOutCplxBufDelay1[idxFreq].r;		
+	}
 }
