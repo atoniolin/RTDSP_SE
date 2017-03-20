@@ -48,19 +48,20 @@
 #define TFRAME FRAMEINC/FSAMP       /* time between calculation of each frame 64/8000 = 8ms*/
 
 /*************************Switches to Control Optimizations****************/
-#define TIMELIMIT 312			/*number of frames to be compared before updating M_1(omega) TIMELIMIT = 312 = 2.5s/0.008s*/
-float KSCALE = 0.0821;				/*for TAU 80ms*/
-//#define KSCALE 0.7788  			/*for TAU 32ms very large attenuation*/  
-
-#define enhLPF 1
-//#define enhLPFPOWER 1
-#define enhLPFNoise 1
-#define overSub 1
-#define delayOutput 1
-int chooseThreshold = 1; /* 1->10*/
-float alphamax = 1000;
-int freqCap = 32;
-int highFreqCap = 32;
+#define TIMELIMIT 312				/*number of frames to be compared before updating M_1(omega)*/
+#define enhLPF 1					//filters input
+//#define enhLPFPOWER 1				//filters based on power of input
+#define enhLPFNoise 1				//filters the noise estimate
+#define overSub 1					//performs oversubtraction for lower frequency bins
+//#define delayOutput 1				//estimates based on adjacent frames
+int		chooseThreshold = 3; 		/* 1->10 using enhancement 3*/
+float	alphamax = 1000;			/* used for oversubtraction */
+int		freqCap = 5;				/* used for oversubtraction */
+float	ALPHA = 20;					/*used to compensate for underestimation of noise*/
+float	LAMBDA = 0.001;				/*used to threshold the lowest value of each bin*/
+float	musicalThreshold = 5;  		/*used as threshold for estimates based on adjacent frames N(w)/X(w)*/
+float	killThreshold = 0.01;		/*removes content below 0.01 to 0 to combat musical noise*/
+float	KSCALE =  0.2019;			/*200Hz cutoff*/
 
 /*************************End of Switches to Control Optimizations****************/
 /******************************* Global declarations ********************************/
@@ -87,18 +88,18 @@ DSK6713_AIC23_CodecHandle H_Codec;	/* Codec handle:- a variable used to identify
 float	*inbuffer, *outbuffer;   		/* Input/output circular buffers */
 float	*inframe, *outframe;          /* Input and output frames */
 float	*inwin, *outwin;              /* Input and output windows */
-float	ingain, outgain;				/* ADC and DAC gains */ 
+float	ingain;						/* ADC and DAC gains */ 
 float	cpufrac; 						/* Fraction of CPU time used */
 volatile int io_ptr=0;              /* Input/ouput pointer for circular buffers */
 volatile int frame_ptr=0;           /* Frame pointer */
 volatile int timePtr = 1;			/*range timePtr : {1,312}. noise estimation update every 2.5sconds*/
-complex *cplxBuf, *outCplxBuf, *thisOutCplxBufDelay1, *thisOutCplxBufDelay2;
+complex *cplxBuf, *outCplxBuf, *outDelay1, *outDelay2, *outDelay3, *outDelay4;
 float	*mag1, *mag2, *mag3, *mag4, *gMag, *noiseMag, *thisMag, *yMag, *thisLPFMag, *noiseLPFMag;
-float	*thisOutDelay1, *thisOutDelay2;
+float	*thisOutDelay1, *thisOutDelay2, *outDelay1Ratio;
 float	floatMAX = 0x7FFFFFFF;
-float	ALPHA = 20;
-float	LAMBDA = 0.01;
 int		idxFreq = 0;
+float   ratio = 0;
+float	outgain=64000;      
  /******************************* Function prototypes *******************************/
 void init_hardware(void);    		/* Initialize codec */ 
 void init_HWI(void);            	/* Initialize hardware interrupts */
@@ -116,6 +117,8 @@ void noLPF (void);					/* computes the minimum based on magnitudes of input (NO 
 void estimateNoiseX (void);			/* noise subtraction on non-LPF version */
 void estimateNoiseLPF (void);		/* noise subtraction on LPF version */
 void shiftMag (void);				/* shifts the minimum estimates */
+complex minOfThree (complex in1, complex in2, complex in3); /*returns minimum of three inputs */
+complex minOfFive (complex in1, complex in2, complex in3, complex in4, complex in5);
 void noiseSubtract (void);			/* performs noise subtraction by multiplying Y(w)=X(w)G(w)*/
 void overSubtract(void);			/* performs oversubtract for lower frequency bins*/
 void noiseThreshold1 (void);		/* performs thresholding based on lambda */
@@ -138,7 +141,6 @@ void main()
   	init_HWI();    					/* initialize hardware interrupts */  
   	init_window();					/* initialize algorithm constants */
   	ingain=INGAIN;
-  	outgain=OUTGAIN;        					  
   	while(1) process_frame();		/* main loop, wait for interrupt */
 }
 /********************************** init_hardware() *********************************/  
@@ -196,7 +198,6 @@ void process_frame(void)
 	fft(FFTLEN, cplxBuf);
 	findMagnitude();
 	/*start processing here*/
-	/*process input frame such as LPF*/
 	#ifdef enhLPF
 		#ifdef enhLPFPOWER
 			LPFPower();
@@ -221,47 +222,27 @@ void process_frame(void)
 		overSubtract();
 	#endif	
 	switch (chooseThreshold) {
-		case 1: noiseThreshold1(); break;
-		case 2: noiseThreshold2(); break;
-		case 3: noiseThreshold3(); break;
-		case 4: noiseThreshold4(); break;
-		case 5: noiseThreshold5(); break;
-		case 6: noiseThreshold6(); break;
-		case 7: noiseThreshold7(); break;
-		case 8: noiseThreshold8(); break;
-		case 9: noiseThreshold9(); break;
-		case 10: noiseThreshold10(); break;
+		case 1:		noiseThreshold1(); break;
+		case 2:		noiseThreshold2(); break;
+		case 3:		noiseThreshold3(); break;
+		case 4:		noiseThreshold4(); break;
+		case 5:		noiseThreshold5(); break;
+		case 6:		noiseThreshold6(); break;
+		case 7:		noiseThreshold7(); break;
+		case 8:		noiseThreshold8(); break;
+		case 9:		noiseThreshold9(); break;
+		case 10:	noiseThreshold10(); break;
 	}
 	
 	/*noise subtraction*/	
 	noiseSubtract();	
-	/*END PROCESSING HERE*/	
-	
+	/*IFFT and convert to float*/
 	#ifdef delayOutput
-		//perform noise comparison assuming threshold is 1.
-		for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
-			//if the next output is smaller, use that value.
-			if(noiseMag[idxFreq]/thisMag[idxFreq] < thisOutDelay1[idxFreq]){
-				thisOutCplxBufDelay1[idxFreq] = outCplxBuf[idxFreq];
-			}
-			if(thisOutDelay2[idxFreq] < thisOutDelay1[idxFreq]){
-				thisOutCplxBufDelay1[idxFreq] = thisOutCplxBufDelay2[idxFreq];
-			}
-		}
-		
-		//here, the current output is the delayed
-		ifft(FFTLEN, thisOutCplxBufDelay1);
 		complexToFloatDelayed();
-		thisOutDelay2 = thisOutDelay1;
-		for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
-			thisOutDelay1[idxFreq] = noiseMag[idxFreq]/thisMag[idxFreq];
-		}
-		thisOutCplxBufDelay1 = outCplxBuf;
-		thisOutCplxBufDelay2 = thisOutCplxBufDelay1;
 	#else
-		ifft(FFTLEN, outCplxBuf);
 		complexToFloat();
 	#endif
+	/*END PROCESSING HERE*/	
 	/********************************************************************************/
     /* multiply outframe by output window and overlap-add into output buffer */  
 	m=io_ptr0;
@@ -303,8 +284,10 @@ void init_buffers (void) {
     outwin		= (float *) calloc(FFTLEN, sizeof(float));	/* Output window */
 	cplxBuf		= (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
 	outCplxBuf	= (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
-	thisOutCplxBufDelay1 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
-	thisOutCplxBufDelay2 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	outDelay1 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	outDelay2 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	outDelay3 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
+	outDelay4 = (complex *) calloc(FFTLEN, sizeof(complex)); /* Array for processing*/
 	mag1			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	mag2			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	mag3			= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
@@ -317,6 +300,7 @@ void init_buffers (void) {
 	noiseLPFMag		= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	thisOutDelay1   = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	thisOutDelay2	= (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
+	outDelay1Ratio  = (float *) calloc(FFTLEN, sizeof(float)); /* magnitude of FFT*/
 	for(k = 0; k < FFTLEN; k++) {
 		mag1[k] = floatMAX;
 		mag2[k] = floatMAX;
@@ -333,6 +317,22 @@ void init_window (void) {
 	outwin[k] = inwin[k]; 
 	} 
 }
+
+float square (float input) {
+	return input*input;
+}
+
+complex minOfThree (complex in1, complex in2, complex in3) {
+	complex complexLocal = in1;
+	if ( cabs(in2) < cabs(complexLocal)){
+		complexLocal = in2;
+	}
+	if ( cabs(in3) < cabs(complexLocal)){
+		complexLocal = in3;
+	}
+	return complexLocal;
+}
+
 
 void floatToComplex (void){
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
@@ -405,7 +405,7 @@ void estimateNoiseX(void) {
 
 void overSubtract (void){
 	/*oversubtract only for low frequency bins*/
-	for(idxFreq = FFTLEN ; idxFreq > FFTLEN-highFreqCap ; idxFreq --){/*0->256*/
+	for(idxFreq = 0 ; idxFreq < freqCap ; idxFreq ++){
 		noiseMag[idxFreq] = noiseMag[idxFreq]*alphamax;
 	}	
 }
@@ -571,17 +571,47 @@ void noiseThreshold10 (void) {
 }
 
 void complexToFloat (void) {
+	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
+	if (outCplxBuf[idxFreq].r < killThreshold) {
+			outCplxBuf[idxFreq].r = 0;
+			outCplxBuf[idxFreq].i = 0;
+		}
+	}
+	ifft(FFTLEN, outCplxBuf);
 	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
 		outframe[idxFreq] = outCplxBuf[idxFreq].r;		
 	}
 }
 
-float square (float input) {
-	return input*input;
-}
-
 void complexToFloatDelayed (void) {
-	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
-		outframe[idxFreq] = thisOutCplxBufDelay1[idxFreq].r;		
+	//perform noise comparison assuming threshold is musicalThreshold.
+	//here, the above processing calculates the future samples and are stored in outCplxBuf.
+	//we try to output outDelay1
+	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
+		//if the next output is smaller, use that value.
+		ratio  = outDelay1Ratio[idxFreq]; //N/w for time t 
+		if(ratio > musicalThreshold){
+			//replace by minimum of previous Y sample (outDelay2),current Y sample(outDelay1), future Y sample (outCplxBuf)
+			outDelay1[idxFreq] = minOfThree(outDelay2[idxFreq],outDelay1[idxFreq],outCplxBuf[idxFreq]);
+		}
 	}
+	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
+		//precalculate the N(w)/X(w) ratio for the delayed samples
+		outDelay1Ratio[idxFreq] = noiseMag[idxFreq]/thisMag[idxFreq];
+	} 
+	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
+		if (outDelay1[idxFreq].r < killThreshold) {
+				outDelay1[idxFreq].r = 0;
+				outDelay1[idxFreq].i = 0;
+			}
+	}
+	
+	//here, the current output is the delayed
+	ifft(FFTLEN, outDelay1);
+	
+	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		outframe[idxFreq] = outDelay1[idxFreq].r;		
+	}
+	outDelay1 = outCplxBuf;
+	outDelay2 = outDelay1;
 }
