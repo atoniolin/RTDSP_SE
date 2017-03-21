@@ -54,7 +54,7 @@ int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
 float	ALPHA = 20;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
 float	LAMBDA = 0.001;				/* Used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
 float	musicalThreshold = 5;  		/* Used as threshold for estimates based on adjacent frames N(w)/X(w) */
-float	killThreshold = 0.001;		/* Removes content below killThreshold to combat musical noise */
+float	killThreshold = 0.01;		/* Removes content below killThreshold to combat musical noise */
 float	KSCALE =  0.2019;			/* KSCALE = exp(-T/tau). For 200Hz cutoff, tau = 0.005, T = 8ms, KSCALE = exp(-8/5)*/
 float	outgain = 96000;      		/* Output gain increased from 16000 to increase loudness of output*/
 /*************************End of Switches to Control Optimizations****************/
@@ -403,7 +403,7 @@ void estimateNoiseLPF(void) {
 	}
 	/* Low-pass filters the noise */
 	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
-		noiseMag[idxFreq] = (1-KSCALE)*noiseLPFMag[idxFreq]+KSCALE*noiseLPFMag[idxFreq]; ;
+		noiseMag[idxFreq] = (1-KSCALE)*noiseLPFMag[idxFreq]+KSCALE*noiseMag[idxFreq]; ;
 	}
 }
 
