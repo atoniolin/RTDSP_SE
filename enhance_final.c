@@ -43,7 +43,7 @@
 /*************************Switches to Control Optimizations****************/
 #define enhLPF 1					/* Task 1: Filters input */
 //#define enhLPFPOWER 1				/* Task 2: Filters based on power of input */
-//#define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
+#define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
 int		chooseThreshold = 3; 		/* Task 4: 1->5. Task5 5: 6->10*/
 #define overSub 1					/* Task 6: Performs oversubtraction for lower frequency bins */
 #define FFTLEN 256					/* Task 7: FFT length = frame length 256/8000 = 32 ms*/
@@ -51,7 +51,7 @@ int		chooseThreshold = 3; 		/* Task 4: 1->5. Task5 5: 6->10*/
 #define TIMELIMIT 312				/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
 float	alphamax = 1000;			/* Used for oversubtraction in Task 6*/
 int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
-float	ALPHA = 15;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
+float	ALPHA = 20;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
 float	LAMBDA = 0.001;				/* Used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
 float	musicalThreshold = 5;  		/* Used as threshold for estimates based on adjacent frames N(w)/X(w) */
 float	killThreshold = 0.001;		/* Removes content below killThreshold to combat musical noise */
@@ -223,19 +223,22 @@ void process_frame(void)
 	}
 	#ifdef overSub
 		overSubtract();	/* Performs oversubtract for lower frequency bins*/
-	#endif	
+	#endif
+	/*
 	switch (chooseThreshold) {
-		case 1:		noiseThreshold1(); break;	/* Performs thresholding based on max{LAMBDA, 1-|N|/|X|}*/
-		case 2:		noiseThreshold2(); break;	/* Performs thresholding based on max{LAMBDA*|N|/|X|, 1-|N|/|X|} */
-		case 3:		noiseThreshold3(); break;	/* Performs thresholding based on max{LAMBDA*|P|/|X|, 1-|N|/|X|} */
-		case 4:		noiseThreshold4(); break;	/* Performs thresholding based on max{LAMBDA*|N|/|P|, 1-|N|/|P|} */
-		case 5:		noiseThreshold5(); break;	/* Performs thresholding based on max{LAMBDA, 1-|N|/|P|} */
-		case 6:		noiseThreshold6(); break;	/* Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|X|)^2} */
-		case 7:		noiseThreshold7(); break;	/* Performs thresholding based on power: max{LAMBDA*|N|/|X|, sqrt(1-(|N|/|X|)^2)} */
-		case 8:		noiseThreshold8(); break;	/* Performs thresholding based on power: max{LAMBDA*|P|/|X|, sqrt(1-(|N|/|X|)^2)} */
-		case 9:		noiseThreshold9(); break;	/* Performs thresholding based on power: max{LAMBDA*|N|/|P|, sqrt(1-(|N|/|P|)^2)} */
-		case 10:	noiseThreshold10(); break;	/* Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|P|)^2)} */
-	}
+		case 1:		noiseThreshold1(); break;	// Performs thresholding based on max{LAMBDA, 1-|N|/|X|}
+		case 2:		noiseThreshold2(); break;	// Performs thresholding based on max{LAMBDA*|N|/|X|, 1-|N|/|X|}
+		case 3:		noiseThreshold3(); break;	// Performs thresholding based on max{LAMBDA*|P|/|X|, 1-|N|/|X|}
+		case 4:		noiseThreshold4(); break;	// Performs thresholding based on max{LAMBDA*|N|/|P|, 1-|N|/|P|}
+		case 5:		noiseThreshold5(); break;	// Performs thresholding based on max{LAMBDA, 1-|N|/|P|}
+		case 6:		noiseThreshold6(); break;	// Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|X|)^2} 
+		case 7:		noiseThreshold7(); break;	// Performs thresholding based on power: max{LAMBDA*|N|/|X|, sqrt(1-(|N|/|X|)^2)}
+		case 8:		noiseThreshold8(); break;	// Performs thresholding based on power: max{LAMBDA*|P|/|X|, sqrt(1-(|N|/|X|)^2)}
+		case 9:		noiseThreshold9(); break;	// Performs thresholding based on power: max{LAMBDA*|N|/|P|, sqrt(1-(|N|/|P|)^2)}
+		case 10:	noiseThreshold10(); break;	// Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|P|)^2)}
+	}*/
+	noiseThreshold3();	/* Performs thresholding based on max{LAMBDA, 1-|N|/|X|}*/
+	
 	
 	noiseSubtract();				/* Performs noise subtraction by multiplying Y(w) = X(w)G(w)*/	
 	#ifdef delayOutput
