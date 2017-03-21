@@ -41,20 +41,20 @@
 #define TFRAME FRAMEINC/FSAMP       /* time between calculation of each frame 64/8000 = 8ms*/
 
 /*************************Switches to Control Optimizations****************/
-#define enhLPF 1					/* Task 1: filters input */
-//#define enhLPFPOWER 1				/* Task 2: filters based on power of input */
-#define enhLPFNoise 1				/* Task 3: filters the noise estimate */
+#define enhLPF 1					/* Task 1: Filters input */
+//#define enhLPFPOWER 1				/* Task 2: Filters based on power of input */
+#define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
 int		chooseThreshold = 3; 		/* Task 4: 1->5. Task5 5: 6->10*/
-#define overSub 1					/* Task 6: performs oversubtraction for lower frequency bins */
-#define FFTLEN 256					/* Task 7: fft length = frame length 256/8000 = 32 ms*/
-//#define delayOutput 1				/* Task 8: estimates based on adjacent frames */
-#define TIMELIMIT 312				/* Task 9: change number of frames to be compared before updating M_1(omega)*/
-float	alphamax = 1000;			/* used for oversubtraction in Task 6*/
-int		freqCap = 5;				/* used for oversubtraction in Task 6*/
-float	ALPHA = 20;					/* used to compensate for underestimation of noise, ALPHA*N(w)*/
-float	LAMBDA = 0.001;				/* used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
-float	musicalThreshold = 5;  		/* used as threshold for estimates based on adjacent frames N(w)/X(w) */
-float	killThreshold = 0.01;		/* removes content below 0.01 to 0 to combat musical noise */
+#define overSub 1					/* Task 6: Performs oversubtraction for lower frequency bins */
+#define FFTLEN 256					/* Task 7: FFT length = frame length 256/8000 = 32 ms*/
+//#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
+#define TIMELIMIT 312				/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
+float	alphamax = 1000;			/* Used for oversubtraction in Task 6*/
+int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
+float	ALPHA = 20;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
+float	LAMBDA = 0.001;				/* Used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
+float	musicalThreshold = 5;  		/* Used as threshold for estimates based on adjacent frames N(w)/X(w) */
+float	killThreshold = 0.01;		/* Removes content below killThreshold to combat musical noise */
 float	KSCALE =  0.2019;			/* KSCALE = exp(-T/tau). For 200Hz cutoff, tau = 0.005, T = 8ms, KSCALE = exp(-8/5)*/
 
 /*************************End of Switches to Control Optimizations****************/
@@ -115,7 +115,7 @@ void init_window (void);			/* Initializes constants for Hamming window */
 void ISR_AIC(void);             	/* Interrupt service routine for codec */
 void process_frame(void);       	/* Frame processing routine */        
 void floatToComplex (void);			/* Converts the input frame in float to complex number */
-void findMagnitude (void);			/* Finds magnitude of the complex number using cabs() */
+void findMagnitude (void);			/* Converts float to of the complex number, takes FFT, and finds magnitude using cabs()*/
 void LPFPower (void); 				/* Use low-pass filtered version of |P(w)| to estimate noise */
 void LPFX (void);					/* Use low-pass filtered version of |X(w)| to estimate noise */
 void findMinLPF (void);				/* Computes the minimum estimate based on LPF version of magnitude / power */
@@ -136,8 +136,8 @@ void noiseThreshold8 (void);		/* Performs thresholding based on power: max{LAMBD
 void noiseThreshold9 (void);		/* Performs thresholding based on power: max{LAMBDA*|N|/|P|, sqrt(1-(|N|/|P|)^2)} */
 void noiseThreshold10 (void);		/* Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|P|)^2)} */
 void complexToFloat (void);			/* Converts the complex time domain back to floating point */
-void complexToFloatDelayed (void);	/* Task 8: converts the complex time domain back to floating point */
-float square (float input);			/* returns squared value of floats */
+void complexToFloatDelayed (void);	/* Task 8: Converts the complex time domain back to floating point */
+float square (float input);			/* Returns squared value of floats */
 complex minOfThree (complex in1, complex in2, complex in3); /*returns minimum of three complex data type inputs */
 /********************************** Main routine ************************************/
 void main()
@@ -200,53 +200,49 @@ void process_frame(void)
 		if (++m >= CIRCBUF) m=0; /* wrap if required */
 	} 	
 	/************************* DO PROCESSING OF FRAME  HERE **************************/
-	floatToComplex();
-	fft(FFTLEN, cplxBuf);
-	findMagnitude();
+	findMagnitude();		/* Converts float to of the complex number, takes FFT, and finds magnitude using cabs() */
 	/*start processing here*/
 	#ifdef enhLPF
 		#ifdef enhLPFPOWER
-			LPFPower();
+			LPFPower();		/* Use low-pass filtered version of |P(w)| to estimate noise */
 		#else
-			LPFX();
+			LPFX();			/* Use low-pass filtered version of |X(w)| to estimate noise */
 		#endif		
 	#else
-		noLPF();
+		noLPF();			/* Computes the minimum based on magnitudes of input directly without LPF */
 	#endif
 	/*noise estimation*/
-	if(++timePtr<TIMELIMIT){}
+	if(++timePtr<TIMELIMIT){}	/* TIMELIMIT chooses period (2.5s) to find estimate of noise*/
 	else{		
 		#ifdef enhLPFNoise
-			estimateNoiseLPF();
+			estimateNoiseLPF();	/* Noise subtraction on LPF version of noise */
 		#else
-			estimateNoiseX();
+			estimateNoiseX();	/* Noise subtraction on non-LPF version */
 		#endif
-		shiftMag();
+		shiftMag();		/* Shift the noise estimate vectors and resets M1 to floatMAX.*/
 		timePtr = 1;
 	}
 	#ifdef overSub
-		overSubtract();
+		overSubtract();	/* Performs oversubtract for lower frequency bins*/
 	#endif	
 	switch (chooseThreshold) {
-		case 1:		noiseThreshold1(); break;
-		case 2:		noiseThreshold2(); break;
-		case 3:		noiseThreshold3(); break;
-		case 4:		noiseThreshold4(); break;
-		case 5:		noiseThreshold5(); break;
-		case 6:		noiseThreshold6(); break;
-		case 7:		noiseThreshold7(); break;
-		case 8:		noiseThreshold8(); break;
-		case 9:		noiseThreshold9(); break;
-		case 10:	noiseThreshold10(); break;
+		case 1:		noiseThreshold1(); break;	/* Performs thresholding based on max{LAMBDA, 1-|N|/|X|}*/
+		case 2:		noiseThreshold2(); break;	/* Performs thresholding based on max{LAMBDA*|N|/|X|, 1-|N|/|X|} */
+		case 3:		noiseThreshold3(); break;	/* Performs thresholding based on max{LAMBDA*|P|/|X|, 1-|N|/|X|} */
+		case 4:		noiseThreshold4(); break;	/* Performs thresholding based on max{LAMBDA*|N|/|P|, 1-|N|/|P|} */
+		case 5:		noiseThreshold5(); break;	/* Performs thresholding based on max{LAMBDA, 1-|N|/|P|} */
+		case 6:		noiseThreshold6(); break;	/* Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|X|)^2} */
+		case 7:		noiseThreshold7(); break;	/* Performs thresholding based on power: max{LAMBDA*|N|/|X|, sqrt(1-(|N|/|X|)^2)} */
+		case 8:		noiseThreshold8(); break;	/* Performs thresholding based on power: max{LAMBDA*|P|/|X|, sqrt(1-(|N|/|X|)^2)} */
+		case 9:		noiseThreshold9(); break;	/* Performs thresholding based on power: max{LAMBDA*|N|/|P|, sqrt(1-(|N|/|P|)^2)} */
+		case 10:	noiseThreshold10(); break;	/* Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|P|)^2)} */
 	}
 	
-	/*noise subtraction*/	
-	noiseSubtract();	
-	/*IFFT and convert to float*/
+	noiseSubtract();				/* Performs noise subtraction by multiplying Y(w) = X(w)G(w)*/	
 	#ifdef delayOutput
-		complexToFloatDelayed();
+		complexToFloatDelayed();	/* Task 8: Converts the complex time domain back to floating point */
 	#else
-		complexToFloat();
+		complexToFloat();			/* Converts the complex time domain back to floating point */
 	#endif
 	/*END PROCESSING HERE*/	
 	/********************************************************************************/
@@ -323,7 +319,7 @@ void init_window (void) {
 }
 
 float square (float input) {
-	/* returns squared value of floats */
+	/* Returns squared value of floats */
 	return input*input;
 }
 
@@ -349,6 +345,9 @@ void floatToComplex (void){
 }
 
 void findMagnitude (void) {
+	/* Converts float to of the complex number, takes FFT, and finds magnitude using cabs() */
+	floatToComplex();		/* Converts the input frame in float to complex number */
+	fft(FFTLEN, cplxBuf);
 	/* Finds magnitude of the complex number using cabs() */
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++){
 		thisMag[idxFreq] = cabs(cplxBuf[idxFreq]);
@@ -391,23 +390,25 @@ void noLPF (void) {
 
 void estimateNoiseLPF(void) {
 	/* Noise subtraction on LPF version of noise */
+	/* Finds minimum estimate of noise from previous buffers*/
 	float minMag;
-	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){/*0->256*/
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
 		minMag = mag1[idxFreq]; /* initialize with the a magnitude from M1*/
 		if(minMag > mag2[idxFreq]){	minMag = mag2[idxFreq];}
 		if(minMag > mag3[idxFreq]){	minMag = mag3[idxFreq];}
 		if(minMag > mag4[idxFreq]){	minMag = mag4[idxFreq];}
 		noiseLPFMag[idxFreq] = ALPHA * minMag; //this is the N(omega)
 	}
-	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){/*0->256*/
-		noiseMag[idxFreq] = (1-KSCALE)*noiseLPFMag[idxFreq]+KSCALE*noiseMag[idxFreq]; ;//this is the Pt(omega)
+	/* Low-pass filters the noise */
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
+		noiseMag[idxFreq] = (1-KSCALE)*noiseLPFMag[idxFreq]+KSCALE*noiseLPFMag[idxFreq]; ;
 	}
 }
 
 void estimateNoiseX(void) {
 	/* Noise subtraction on non-LPF version */
 	float minMag;
-	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){/*0->256*/
+	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
 		minMag = mag1[idxFreq]; /* initialize with the a magnitude from M1*/
 		if(minMag > mag2[idxFreq]){	minMag = mag2[idxFreq];}
 		if(minMag > mag3[idxFreq]){	minMag = mag3[idxFreq];}
@@ -595,35 +596,37 @@ void noiseThreshold10 (void) {
 
 void complexToFloat (void) {
 	/* Converts the complex time domain back to floating point */
+	/* Removes musical noise content using killThreshold */
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
-	if (outCplxBuf[idxFreq].r < killThreshold) {
-			outCplxBuf[idxFreq].r = 0;
-			outCplxBuf[idxFreq].i = 0;
+		if (outCplxBuf[idxFreq].r < killThreshold) {
+				outCplxBuf[idxFreq].r = 0;
+				outCplxBuf[idxFreq].i = 0;
 		}
 	}
+	/* Take IFFT */
 	ifft(FFTLEN, outCplxBuf);
+	/* Convert signal represented in complex number to real number by taking real part*/
 	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
 		outframe[idxFreq] = outCplxBuf[idxFreq].r;		
 	}
 }
 
 void complexToFloatDelayed (void) {
-	/* Task 8: converts the complex time domain back to floating point */
-	//perform noise comparison assuming threshold is musicalThreshold.
-	//here, the above processing calculates the future samples and are stored in outCplxBuf.
-	//we try to output outDelay1
+	/* Task 8: Converts the complex time domain back to floating point */
+	/* Note we return Y_(t-1) instead of Y(t)*/
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
-		//if the next output is smaller, use that value.
-		ratio  = outDelay1Ratio[idxFreq]; //N/w for time t 
-		if(ratio > musicalThreshold){
-			//replace by minimum of previous Y sample (outDelay2),current Y sample(outDelay1), future Y sample (outCplxBuf)
+		/*|N|/|X| for time Y_(t-1)*/
+		ratio  = outDelay1Ratio[idxFreq];
+		/* Replace Y_(t-1) by minimum of Y_(t-2),Y_(t-1),Y_(t): outDelay2, outDelay1, outCplxBuf */
+		if(ratio > musicalThreshold){			
 			outDelay1[idxFreq] = minOfThree(outDelay2[idxFreq],outDelay1[idxFreq],outCplxBuf[idxFreq]);
 		}
 	}
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
-		//precalculate the N(w)/X(w) ratio for the delayed samples
+		//Store |N|/|X| for Y_(t-1)
 		outDelay1Ratio[idxFreq] = noiseMag[idxFreq]/thisMag[idxFreq];
 	} 
+	/* Removes musical noise content using killThreshold */
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
 		if (outDelay1[idxFreq].r < killThreshold) {
 				outDelay1[idxFreq].r = 0;
@@ -631,12 +634,13 @@ void complexToFloatDelayed (void) {
 			}
 	}
 	
-	//here, the current output is the delayed
-	ifft(FFTLEN, outDelay1);
-	
+	/* Take IFFT*/
+	ifft(FFTLEN, outDelay1);	
+	/* Returns the processed but delayed output as real numbers */
 	for (idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
 		outframe[idxFreq] = outDelay1[idxFreq].r;		
 	}
+	/* Stores the previous two frames used to minimize musical noise */
 	outDelay1 = outCplxBuf;
 	outDelay2 = outDelay1;
 }
