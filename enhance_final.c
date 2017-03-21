@@ -43,20 +43,20 @@
 /*************************Switches to Control Optimizations****************/
 #define enhLPF 1					/* Task 1: Filters input */
 //#define enhLPFPOWER 1				/* Task 2: Filters based on power of input */
-#define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
+//#define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
 int		chooseThreshold = 3; 		/* Task 4: 1->5. Task5 5: 6->10*/
 #define overSub 1					/* Task 6: Performs oversubtraction for lower frequency bins */
 #define FFTLEN 256					/* Task 7: FFT length = frame length 256/8000 = 32 ms*/
-//#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
+#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
 #define TIMELIMIT 312				/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
 float	alphamax = 1000;			/* Used for oversubtraction in Task 6*/
 int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
-float	ALPHA = 20;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
+float	ALPHA = 15;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
 float	LAMBDA = 0.001;				/* Used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
 float	musicalThreshold = 5;  		/* Used as threshold for estimates based on adjacent frames N(w)/X(w) */
-float	killThreshold = 0.01;		/* Removes content below killThreshold to combat musical noise */
+float	killThreshold = 0.001;		/* Removes content below killThreshold to combat musical noise */
 float	KSCALE =  0.2019;			/* KSCALE = exp(-T/tau). For 200Hz cutoff, tau = 0.005, T = 8ms, KSCALE = exp(-8/5)*/
-
+float	outgain = 96000;      		/* Output gain increased from 16000 to increase loudness of output*/
 /*************************End of Switches to Control Optimizations****************/
 
 /******************************* Global declarations ********************************/
@@ -91,7 +91,6 @@ volatile int timePtr = 1;			/* Range timePtr : {1,312}. noise estimation update 
 int		idxFreq = 0;				/* Global counter variable to avoid repetitive declaration*/
 float	floatMAX = 0x7FFFFFFF;		/* Maximum float value used to initialize buffers */
 float   ratio = 0;					/* Ratio of |N|/|X|. ratio explicitly declared for Watch window*/
-float	outgain=64000;      		/* Output gain increased from 16000 to increase loudness of output*/
 
 /**************** Declare complex and float buffer pointers****************/
 complex *cplxBuf;					/* Complex buffer to store input frames */
