@@ -47,7 +47,7 @@
 int		chooseThreshold = 3; 		/* Task 4: 1->5. Task5 5: 6->10*/
 #define overSub 1					/* Task 6: Performs oversubtraction for lower frequency bins */
 #define FFTLEN 256					/* Task 7: FFT length = frame length 256/8000 = 32 ms*/
-#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
+//#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
 #define TIMELIMIT 312				/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
 float	alphamax = 1000;			/* Used for oversubtraction in Task 6*/
 int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
