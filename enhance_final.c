@@ -44,19 +44,20 @@
 #define enhLPF 1					/* Task 1: Filters input */
 //#define enhLPFPOWER 1				/* Task 2: Filters based on power of input */
 #define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
-int		chooseThreshold = 3; 		/* Task 4: 1->5. Task5 5: 6->10*/
+//int		chooseThreshold = 1; 		/* Task 4: 1->5. Task5 5: 6->10*/
 #define overSub 1					/* Task 6: Performs oversubtraction for lower frequency bins */
 #define FFTLEN 256					/* Task 7: FFT length = frame length 256/8000 = 32 ms*/
-//#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
-#define TIMELIMIT 312				/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
+#define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
+float	TIMELIMIT = 312;			/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
 float	alphamax = 1000;			/* Used for oversubtraction in Task 6*/
 int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
-float	ALPHA = 20;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
+float	ALPHA = 15;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
 float	LAMBDA = 0.001;				/* Used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
 float	musicalThreshold = 5;  		/* Used as threshold for estimates based on adjacent frames N(w)/X(w) */
-float	killThreshold = 0.01;		/* Removes content below killThreshold to combat musical noise */
+float	noiseThreshold = 1;  		/* Used as threshold for noise */
+float	killThreshold = 0.1;		/* Removes content below killThreshold to combat musical noise */
 float	KSCALE =  0.2019;			/* KSCALE = exp(-T/tau). For 200Hz cutoff, tau = 0.005, T = 8ms, KSCALE = exp(-8/5)*/
-float	outgain = 96000;      		/* Output gain increased from 16000 to increase loudness of output*/
+
 /*************************End of Switches to Control Optimizations****************/
 
 /******************************* Global declarations ********************************/
@@ -83,7 +84,7 @@ DSK6713_AIC23_CodecHandle H_Codec;	/* Codec handle:- a variable used to identify
 float	*inbuffer, *outbuffer;   	/* Input/output circular buffers */
 float	*inframe, *outframe;        /* Input and output frames */
 float	*inwin, *outwin;            /* Input and output windows */
-float	ingain;						/* ADC and DAC gains */ 
+float	ingain, outgain;			/* ADC and DAC gains */ 
 float	cpufrac; 					/* Fraction of CPU time used */
 volatile int io_ptr=0;              /* Input/ouput pointer for circular buffers */
 volatile int frame_ptr=0;           /* Frame pointer */
@@ -105,6 +106,7 @@ float   *yMag;						/* Buffer to store Y(w), the magnitude of filtered signal*/
 float   *thisLPFMag;				/* Buffer to store P(w), the magnitude of low-pass filtered input signal*/
 float   *noiseLPFMag;				/* Buffer to store P_N(w), the magnitude of low-pass filtered noise signal*/
 float   *outDelay1Ratio;			/* Task 8: Buffer to store ratio N(w)/X(w) for delayed output by 1 */
+float	*outDelay1X;
 
  /******************************* Function prototypes *******************************/
 void init_hardware(void);    		/* Initialize codec */ 
@@ -145,7 +147,8 @@ void main()
   	init_hardware();				/* Initialize board and the audio port */
   	init_HWI();    					/* Initialize hardware interrupts */  
   	init_window();					/* Initialize algorithm constants */
-  	ingain=INGAIN;					/* ADC Gain, 16000. Outgain redefined above*/
+  	ingain=INGAIN;					/* ADC Gain, 16000. */
+  	outgain=OUTGAIN;				/* DAC Gain, 16000. */
   	while(1) process_frame();		/* Main loop, wait for interrupt */
 }
 /********************************** init_hardware() *********************************/  
@@ -237,10 +240,15 @@ void process_frame(void)
 		case 9:		noiseThreshold9(); break;	// Performs thresholding based on power: max{LAMBDA*|N|/|P|, sqrt(1-(|N|/|P|)^2)}
 		case 10:	noiseThreshold10(); break;	// Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|P|)^2)}
 	}*/
-	noiseThreshold3();	/* Performs thresholding based on max{LAMBDA, 1-|N|/|X|}*/
+	noiseThreshold6();	/* Performs thresholding based on max{LAMBDA, 1-|N|/|X|}*/
 	
 	
 	noiseSubtract();				/* Performs noise subtraction by multiplying Y(w) = X(w)G(w)*/	
+	/*
+	 * for (idxFreq = idxHPF; idxFreq<idxHPF2; idxFreq++ ) {
+		outCplxBuf[idxFreq].r = 0.0;
+		outCplxBuf[idxFreq].i = 0.0;
+	}*/
 	#ifdef delayOutput
 		complexToFloatDelayed();	/* Task 8: Converts the complex time domain back to floating point */
 	#else
@@ -301,6 +309,7 @@ void init_buffers (void) {
 	thisLPFMag		= (float *) calloc(FFTLEN, sizeof(float)); /* Buffer to store P(w), the magnitude of low-pass filtered input signal*/
 	noiseLPFMag		= (float *) calloc(FFTLEN, sizeof(float)); /* Buffer to store P_N(w), the magnitude of low-pass filtered noise signal*/
 	outDelay1Ratio  = (float *) calloc(FFTLEN, sizeof(float)); /* Task 8: Buffer to store ratio N(w)/X(w) for delayed output by 1 */
+	outDelay1X		= (float *) calloc(FFTLEN, sizeof(float)); /* Task 8: Buffer to store X(w) for delayed output by 1 */
 	for(k = 0; k < FFTLEN; k++) {
 		/*Initialize minimum estimates to floatMAX. Overwritten by smaller values read from ADC*/
 		mag1[k] = floatMAX;
@@ -336,7 +345,6 @@ complex minOfThree (complex in1, complex in2, complex in3) {
 	}
 	return complexLocal;
 }
-
 
 void floatToComplex (void){
 	/* Converts the input frame in float to complex number */
@@ -402,8 +410,15 @@ void estimateNoiseLPF(void) {
 		noiseLPFMag[idxFreq] = ALPHA * minMag; //this is the N(omega)
 	}
 	/* Low-pass filters the noise */
+	
 	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
-		noiseMag[idxFreq] = (1-KSCALE)*noiseLPFMag[idxFreq]+KSCALE*noiseMag[idxFreq]; ;
+		if (outDelay1X[idxFreq] < killThreshold){
+			noiseMag[idxFreq] = (1-KSCALE)*noiseLPFMag[idxFreq]+KSCALE*noiseMag[idxFreq]; ;
+		}
+		else {
+			noiseMag[idxFreq] = noiseLPFMag[idxFreq];
+		}
+		
 	}
 }
 
@@ -525,8 +540,8 @@ void noiseThreshold6 (void) {
 	float minMag;
 	for(idxFreq = 0 ; idxFreq < FFTLEN ; idxFreq ++){
 		minMag = sqrt(1 - square(noiseMag[idxFreq])/square(thisMag[idxFreq]));
-		if(minMag <= LAMBDA){
-			gMag[idxFreq] = LAMBDA;
+		if(minMag <= LAMBDA*thisMag[idxFreq]){
+			gMag[idxFreq] = LAMBDA*thisMag[idxFreq];
 		}
 		else{
 			gMag[idxFreq] = minMag;
@@ -620,13 +635,14 @@ void complexToFloatDelayed (void) {
 		/*|N|/|X| for time Y_(t-1)*/
 		ratio  = outDelay1Ratio[idxFreq];
 		/* Replace Y_(t-1) by minimum of Y_(t-2),Y_(t-1),Y_(t): outDelay2, outDelay1, outCplxBuf */
-		if(ratio > musicalThreshold){			
+		if(ratio > musicalThreshold && outDelay1X[idxFreq] > noiseThreshold){			
 			outDelay1[idxFreq] = minOfThree(outDelay2[idxFreq],outDelay1[idxFreq],outCplxBuf[idxFreq]);
 		}
 	}
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
 		//Store |N|/|X| for Y_(t-1)
 		outDelay1Ratio[idxFreq] = noiseMag[idxFreq]/thisMag[idxFreq];
+		outDelay1X[idxFreq] = thisMag[idxFreq];
 	} 
 	/* Removes musical noise content using killThreshold */
 	for (idxFreq = 0; idxFreq < FFTLEN; idxFreq++ ){
@@ -634,6 +650,7 @@ void complexToFloatDelayed (void) {
 				outDelay1[idxFreq].r = 0;
 				outDelay1[idxFreq].i = 0;
 			}
+
 	}
 	
 	/* Take IFFT*/
