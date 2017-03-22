@@ -51,7 +51,7 @@
 float	TIMELIMIT = 312;			/* Task 9: Change number of frames to be compared before updating M_1(omega)*/
 float	alphamax = 1000;			/* Used for oversubtraction in Task 6*/
 int		freqCap = 5;				/* Used for oversubtraction in Task 6*/
-float	ALPHA = 15;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
+float	ALPHA = 20;					/* Used to compensate for underestimation of noise, ALPHA*N(w)*/
 float	LAMBDA = 0.001;				/* Used to threshold the lowest value of each bin, max{LAMBDA, 1-N(w)/X(w)*/
 float	musicalThreshold = 5;  		/* Used as threshold for estimates based on adjacent frames N(w)/X(w) */
 float	noiseThreshold = 1;  		/* Used as threshold for noise */
