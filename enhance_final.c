@@ -306,13 +306,6 @@ void init_buffers (void) {
 	noiseLPFMag		= (float *) calloc(FFTLEN, sizeof(float)); /* Buffer to store P_N(w), the magnitude of low-pass filtered noise signal*/
 	outDelay1Ratio  = (float *) calloc(FFTLEN, sizeof(float)); /* Task 8: Buffer to store ratio N(w)/X(w) for delayed output by 1 */
 	outDelay1X		= (float *) calloc(FFTLEN, sizeof(float)); /* Task 8: Buffer to store X(w) for delayed output by 1 */
-	for(k = 0; k < FFTLEN; k++) {
-		/*Initialize minimum estimates to floatMAX. Overwritten by smaller values read from ADC*/
-		mag1[k] = floatMAX;
-		mag2[k] = floatMAX;
-		mag3[k] = floatMAX;
-		mag4[k] = floatMAX;
-	}
 }
 
 void init_window (void) {
