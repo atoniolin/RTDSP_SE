@@ -44,7 +44,7 @@
 #define enhLPF 1					/* Task 1: Filters input */
 //#define enhLPFPOWER 1				/* Task 2: Filters based on power of input */
 #define enhLPFNoise 1				/* Task 3: Filters the noise estimate */
-//int		chooseThreshold = 1; 		/* Task 4: 1->5. Task5 5: 6->10*/
+int		chooseThreshold = 6; 		/* Task 4: 1->5. Task5 5: 6->10*/
 #define overSub 1					/* Task 6: Performs oversubtraction for lower frequency bins */
 #define FFTLEN 256					/* Task 7: FFT length = frame length 256/8000 = 32 ms*/
 #define delayOutput 1				/* Task 8: Estimates based on adjacent frames */
@@ -216,6 +216,7 @@ void process_frame(void)
 	/*noise estimation*/
 	if(++timePtr<TIMELIMIT){}	/* TIMELIMIT chooses period (2.5s) to find estimate of noise*/
 	else{		
+		
 		#ifdef enhLPFNoise
 			estimateNoiseLPF();	/* Noise subtraction on LPF version of noise */
 		#else
@@ -227,7 +228,7 @@ void process_frame(void)
 	#ifdef overSub
 		overSubtract();	/* Performs oversubtract for lower frequency bins*/
 	#endif
-	/*
+	
 	switch (chooseThreshold) {
 		case 1:		noiseThreshold1(); break;	// Performs thresholding based on max{LAMBDA, 1-|N|/|X|}
 		case 2:		noiseThreshold2(); break;	// Performs thresholding based on max{LAMBDA*|N|/|X|, 1-|N|/|X|}
@@ -239,16 +240,11 @@ void process_frame(void)
 		case 8:		noiseThreshold8(); break;	// Performs thresholding based on power: max{LAMBDA*|P|/|X|, sqrt(1-(|N|/|X|)^2)}
 		case 9:		noiseThreshold9(); break;	// Performs thresholding based on power: max{LAMBDA*|N|/|P|, sqrt(1-(|N|/|P|)^2)}
 		case 10:	noiseThreshold10(); break;	// Performs thresholding based on power: max{LAMBDA, sqrt(1-(|N|/|P|)^2)}
-	}*/
-	noiseThreshold6();	/* Performs thresholding based on max{LAMBDA, 1-|N|/|X|}*/
+	}
 	
 	
 	noiseSubtract();				/* Performs noise subtraction by multiplying Y(w) = X(w)G(w)*/	
-	/*
-	 * for (idxFreq = idxHPF; idxFreq<idxHPF2; idxFreq++ ) {
-		outCplxBuf[idxFreq].r = 0.0;
-		outCplxBuf[idxFreq].i = 0.0;
-	}*/
+
 	#ifdef delayOutput
 		complexToFloatDelayed();	/* Task 8: Converts the complex time domain back to floating point */
 	#else
@@ -418,7 +414,6 @@ void estimateNoiseLPF(void) {
 		else {
 			noiseMag[idxFreq] = noiseLPFMag[idxFreq];
 		}
-		
 	}
 }
 
@@ -443,12 +438,12 @@ void overSubtract (void){
 
 void shiftMag(void) {
 	int k;
-	/* Shift the noise estimate vectors and resets M1 to floatMAX.*/
-	mag4=mag3;
-	mag3=mag2;
-	mag2=mag1;
-	for(k = 0; k < FFTLEN; k++) { 
-		mag1[k] = floatMAX;
+	/* Shift the noise estimate vectors and resets M1 to X(w).*/
+	for(k = 0; k < FFTLEN; k++) {
+		mag4[k] = mag3[k];
+		mag3[k] = mag2[k];
+		mag2[k] = mag1[k]; 
+		mag1[k] = thisMag[k];
 	}
 }
 
